@@ -10,7 +10,6 @@ import {
   CircularProgress,
   Chip,
   Alert,
-  Grid,
   Paper,
   Divider,
   Stack,
@@ -25,6 +24,19 @@ import {
   Info as InfoIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+} from 'recharts';
 import { scanUrl } from '../services/api';
 
 const URLScanner = () => {
@@ -32,6 +44,7 @@ const URLScanner = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const handleScan = async (e) => {
     e.preventDefault();
@@ -47,6 +60,14 @@ const URLScanner = () => {
       return;
     }
 
+    try {
+      const u = new URL(cleanUrl);
+      if (!['http:', 'https:'].includes(u.protocol)) throw new Error('bad');
+    } catch {
+      setError('Enter a full URL starting with http:// or https://');
+      return;
+    }
+
     setError(null);
     setLoading(true);
     setResult(null);
@@ -54,6 +75,12 @@ const URLScanner = () => {
     try {
       const data = await scanUrl(cleanUrl);
       setResult(data);
+      setHistory((h) =>
+        [
+          ...h,
+          { label: `#${h.length + 1}`, url: data.url, risk: data.risk_score_pct },
+        ].slice(-10)
+      );
     } catch (err) {
       setError(err.message || 'Failed to scan URL. Please check backend status.');
     } finally {
@@ -101,6 +128,7 @@ const URLScanner = () => {
                 onChange={(e) => setUrlInput(e.target.value)}
                 disabled={loading}
                 error={Boolean(error)}
+                inputProps={{ maxLength: 2048 }}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
@@ -110,7 +138,22 @@ const URLScanner = () => {
                 }}
               />
 
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="flex-end">
+              {/* Scan is first in the code so Tab reaches it first; row-reverse keeps it on the right */}
+              <Stack
+                direction={{ xs: 'column-reverse', sm: 'row-reverse' }}
+                spacing={2}
+                justifyContent="flex-start"
+              >
+                <Button
+                  type="submit"
+                  variant="contained"
+                  color="primary"
+                  size="large"
+                  disabled={loading || !urlInput.trim()}
+                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SecurityIcon />}
+                >
+                  {loading ? 'Analyzing Mechanics...' : 'Scan URL Threat'}
+                </Button>
                 {result && (
                   <Button
                     variant="outlined"
@@ -122,16 +165,6 @@ const URLScanner = () => {
                     Clear Result
                   </Button>
                 )}
-                <Button
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  size="large"
-                  disabled={loading || !urlInput.trim()}
-                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SecurityIcon />}
-                >
-                  {loading ? 'Analyzing Mechanics...' : 'Scan URL Threat'}
-                </Button>
               </Stack>
             </Stack>
           </form>
@@ -168,7 +201,7 @@ const URLScanner = () => {
             borderColor: result.is_phishing ? 'error.main' : 'success.main',
           }}
         >
-          <CardContent sx={{ p: 4 }}>
+          <CardContent sx={{ p: { xs: 2, md: 4 } }}>
             {/* Verdict Header */}
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               {result.is_phishing ? (
@@ -176,7 +209,7 @@ const URLScanner = () => {
               ) : (
                 <CheckCircleIcon color="success" sx={{ fontSize: 44, mr: 2 }} />
               )}
-              <Box>
+              <Box sx={{ minWidth: 0 }}>
                 <Typography
                   variant="h5"
                   fontWeight="bold"
@@ -184,7 +217,7 @@ const URLScanner = () => {
                 >
                   {result.verdict}
                 </Typography>
-                <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 600 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
                   Target: <strong>{result.url}</strong>
                 </Typography>
               </Box>
@@ -194,7 +227,7 @@ const URLScanner = () => {
 
             {/* Risk & Trust Gauge */}
             <Box sx={{ mb: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 1 }}>
                 <Typography variant="subtitle1" fontWeight="bold">
                   Threat Risk Level: {result.risk_score_pct}%
                 </Typography>
@@ -210,29 +243,37 @@ const URLScanner = () => {
               />
             </Box>
 
-            {/* Detailed Metric Cards */}
-            <Grid container spacing={2} sx={{ mb: 4 }}>
-              <Grid item xs={12} sm={6}>
-                <Paper variant="outlined" sx={{ p: 2, textAlign: 'center', bgcolor: 'background.default' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Phishing Probability
-                  </Typography>
-                  <Typography variant="h4" fontWeight="bold" color={result.is_phishing ? 'error.main' : 'text.primary'}>
-                    {result.risk_score_pct}%
-                  </Typography>
-                </Paper>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Paper variant="outlined" sx={{ p: 2, textAlign: 'center', bgcolor: 'background.default' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Safety / Trust Confidence
-                  </Typography>
-                  <Typography variant="h4" fontWeight="bold" color={!result.is_phishing ? 'success.main' : 'text.primary'}>
-                    {result.trust_score_pct}%
-                  </Typography>
-                </Paper>
-              </Grid>
-            </Grid>
+            {/* Chart 1: how confident is this verdict? */}
+            <Box sx={{ mb: 4 }}>
+              <Typography variant="h6" fontWeight="bold">
+                Verdict confidence
+              </Typography>
+              <Box
+                sx={{ height: 240 }}
+                role="img"
+                aria-label={`Donut chart: ${result.risk_score_pct}% phishing risk and ${result.trust_score_pct}% trust`}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={55}
+                      outerRadius={85}
+                      data={[
+                        { name: 'Phishing risk', value: result.risk_score_pct },
+                        { name: 'Trust', value: result.trust_score_pct },
+                      ]}
+                    >
+                      <Cell fill="#f44336" />
+                      <Cell fill="#66bb6a" />
+                    </Pie>
+                    <Tooltip formatter={(v) => `${v}%`} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </Box>
+            </Box>
 
             {/* Diagnostic Threat Risk Flags */}
             <Typography variant="h6" fontWeight="bold" sx={{ mb: 1.5 }}>
@@ -250,6 +291,43 @@ const URLScanner = () => {
                 />
               ))}
             </Stack>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Chart 2: how do the URLs checked this session compare? */}
+      {history.length > 0 && (
+        <Card elevation={3} sx={{ mt: 4, borderRadius: 2 }}>
+          <CardContent>
+            <Typography variant="h6" fontWeight="bold" gutterBottom>
+              Session history: risk score per scan
+            </Typography>
+            <Box
+              sx={{ height: 260 }}
+              role="img"
+              aria-label="Bar chart of the phishing risk percentage for each URL scanned in this session"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={history}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#445" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fill: '#ccd6f6' }}
+                    label={{ value: 'Scan number', position: 'insideBottom', offset: -5, fill: '#ccd6f6' }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fill: '#ccd6f6' }}
+                    label={{ value: 'Risk %', angle: -90, position: 'insideLeft', fill: '#ccd6f6' }}
+                  />
+                  <Tooltip
+                    formatter={(v) => `${v}%`}
+                    labelFormatter={(l, p) => (p && p[0] && p[0].payload ? p[0].payload.url : l)}
+                  />
+                  <Bar dataKey="risk" name="Risk %" fill="#1976d2" />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
           </CardContent>
         </Card>
       )}
